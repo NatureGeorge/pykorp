@@ -1,2 +1,2 @@
 # pykorp
-A python interface of the KORP (https://github.com/chaconlab/Korp).
+A python interface of KORP (https://github.com/chaconlab/Korp).
