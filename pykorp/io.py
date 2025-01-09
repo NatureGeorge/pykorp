@@ -16,9 +16,10 @@
 # @Filename: io.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-08 05:28:38 pm
+# @Last Modified: 2025-01-09 11:56:42 am
 import torch
 import roma
+from .utils import planar_angle, dihedral, projection
 
 
 def coords2frame(n_coords: torch.Tensor, ca_coords: torch.Tensor, c_coords: torch.Tensor):
@@ -50,6 +51,40 @@ def coords2frame(n_coords: torch.Tensor, ca_coords: torch.Tensor, c_coords: torc
     return roma.special_gramschmidt(torch.stack([r_cca + r_nca, r_nca], dim=-1)).roll(shifts=-1, dims=-1) # the NCaC frame used by KORP
 
 
+def featurize_frame(fa_v: torch.Tensor, fa_p: torch.Tensor, fb_v: torch.Tensor, fb_p: torch.Tensor):  # cutoff: float = 16.0
+    '''
+    Definition of the 6D features (relative orientation and position) used by 
+    
+    José Ramón López-Blanco and Pablo Chacón. (2019)
+    KORP: knowledge-based 6D potential for fast protein and loop modeling.
+    doi: 10.1093/bioinformatics/btz026.
+    
+    Input shape:
+        fa_v: rotmat_a (...xax3x3)
+        fa_p: trans_a (...xax3)
+        fb_v: rotmat_b (...xbx3x3)
+        fb_p: trans_b (...xbx3)
+    
+    Output shape: (...xaxbx6)
+    '''
+    rab = fb_p.unsqueeze(-3) - fa_p.unsqueeze(-2) # shape: (...xaxbx3)
+    rba = -rab
+    
+    dab = rab.norm(dim=-1) # shape: (...xaxb)
+    # dmask = dab < cutoff
+    
+    fa_vx = fa_v[..., 0].unsqueeze(-2) # shape: (...xax1x3)
+    fa_vz = fa_v[..., 2].unsqueeze(-2) # shape: (...xax1x3)
+    fb_vx = fb_v[..., 0].unsqueeze(-3) # shape: (...x1xbx3)
+    fb_vz = fb_v[..., 2].unsqueeze(-3) # shape: (...x1xbx3)
 
+    ta = planar_angle(fa_vz, rab)
+    tb = planar_angle(fb_vz, rba)
 
+    pa = planar_angle(fa_vx, rab - projection(rab, fa_vz)) # project on the z axis and then substract it
+    pb = planar_angle(fb_vx, rba - projection(rba, fb_vz)) # project on the z axis and then substract it
+
+    chi = dihedral(-fa_vz, rab, fb_vz)
+    
+    return dab, ta, tb, pa, pb, chi
 
