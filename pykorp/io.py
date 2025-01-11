@@ -2,7 +2,8 @@
 # @Filename: io.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-10 04:14:19 pm
+# @Last Modified: 2025-01-11 12:29:45 pm
+import math
 import torch
 import roma
 from warnings import warn
@@ -100,7 +101,7 @@ def discretize_features(br: torch.Tensor, theta: torch.Tensor, dpsi: torch.Tenso
     if ipb_mask.any():
         warn('ipb_mask'); ipb[ipb_mask] = nitb[ipb_mask] - 1
     
-    ic_thr = torch.round(torch.tensor(2 * torch.pi / dchi, device=chi.device)).to(dtype=torch.int64)
+    ic_thr = round(2 * math.pi / dchi)
     ic_mask = ic >= ic_thr
     if ic_mask.any():
         warn('ic_mask'); ic[ic_mask] = ic_thr - 1
@@ -109,8 +110,57 @@ def discretize_features(br: torch.Tensor, theta: torch.Tensor, dpsi: torch.Tenso
 
 
 def korp_energy(
-        korp_map,
         dab: torch.Tensor, ta: torch.Tensor, tb: torch.Tensor, pa: torch.Tensor, pb: torch.Tensor, chi: torch.Tensor,
-        chains: torch.Tensor, dab_cutoff: float = 16.0, bonding_thr: int = 9):
-    pass
+        seqab: torch.Tensor, seqsepab: torch.Tensor,
+        korp_maps_flatten: torch.Tensor, korp_maps_shape: torch.Size, fmapping: torch.Tensor, smapping: torch.Tensor,
+        br: torch.Tensor, theta: torch.Tensor, dpsi: torch.Tensor, dchi: float, nring: int, ncellsring: torch.Tensor, icell: torch.Tensor,
+        bonding_thr: int = 9):
+    '''
+    Input shape:
+        seqab: (...xaxbx2)
+        seqsepab: (...xaxb)
+
+    Output shape: (...xaxb)
+    
+    NOTE: this function is not differentiable
+
+    Additional NOTE:
+    
+    * Triu part
+    * dab < dab_max
+    * bond = 0 if (seq_sep > bonding_thr) or (diff_chain) else 1
+    * bonding_factor = 1.8
+    
+    '''
+    ir, ita, itb, ipa, ipb, ic = discretize_features(br, theta, dpsi, dchi, nring, ncellsring, dab, ta, tb, pa, pb, chi)
+    
+    dab_min, dab_max = br[0], br[-1]
+    mask = ((seqsepab > 0) & (dab > dab_min) & (dab < dab_max)).to(dtype=torch.int64) # shape (...xaxb)
+    
+    sd = seqsepab.clone()     # | -> when `smapping=[ 0, -1,  1,  1,  1,  0,  0,  0,  0,  0]`, `bonding_thr` is essentially 4 and `seqsepab` should > 1
+    sd[sd > bonding_thr] = 0  # | -> thus `mask` should be `((seqsepab > 1) & (dab > dab_min) & (dab < dab_max)).to(dtype=torch.int64)`
+    s = smapping[sd]          # | -> then `s` can be directly assigned to be `(seqsepab <= bonding_thr).to(dtype=torch.int64)` given that `bonding_thr = 4` # shape (...xaxb)
+    mask &= s >= 0            # | -> but here remain the original code for potential flexibility
+    
+    weighting_factor = fmapping[s] # shape (...xaxb)
+    # korp_maps,                   # original len(shape) eq 7 -> assume already be flatten
+    korp_maps_strides = [math.prod(korp_maps_shape[i+1:]) for i in range(len(korp_maps_shape))]
+    #map_index = (s,                # shape (...xaxb) 
+    #             seqab,            # shape (...xaxbx2)
+    #             ir,               # shape (...xaxb) 
+    #             icell[ita] + ipa, # shape (...xaxb) 
+    #             icell[itb] + ipb, # shape (...xaxb) 
+    #             ic                # shape (...xaxb) 
+    #            )
+    map_index = (s *                 korp_maps_strides[0] +
+                seqab[..., 0] *      korp_maps_strides[1] +
+                seqab[..., 1] *      korp_maps_strides[2] +
+                ir *                 korp_maps_strides[3] +
+                (icell[ita] + ipa) * korp_maps_strides[4] +
+                (icell[itb] + ipb) * korp_maps_strides[5] +
+                ic *                 korp_maps_strides[6])
+    energy = torch.take(korp_maps_flatten, map_index) # shape (...xaxb) 
+    energy = mask * weighting_factor * energy
+    
+    return energy #.sum(dim=(-1,-2))
 
