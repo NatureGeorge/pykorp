@@ -2,3 +2,4 @@ dev
 build
 .vscode
 *.so
+pykorp/__pycache__
