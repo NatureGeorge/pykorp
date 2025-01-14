@@ -2,9 +2,10 @@
 # @Filename: __init__.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-14 12:05:58 am
+# @Last Modified: 2025-01-14 01:34:50 pm
 import torch
 import gemmi
+from collections import defaultdict
 from .io import aa_dict as AA_20
 
 
@@ -26,6 +27,12 @@ def config(bin_path: str, device: str = 'cpu', bonding_factor: float = 1.8):
     return korp_maps_flatten, korp_maps_shape, fmapping, smapping, br, theta, dpsi, dchi, nring, ncellsring, icell
 
 
+def seqid2num(seqid, record):
+    record[seqid.num] += 1
+    gap = sum(val - 1 for key, val in record.items() if key < seqid.num and val > 1)
+    return seqid.num + record[seqid.num] - 1 + gap
+
+
 def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, device: str = 'cpu'):
     st = gemmi.read_structure(pdb_path)
     st.remove_alternative_conformations()
@@ -44,9 +51,11 @@ def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, de
         raise NotImplementedError('Invalid file suffix!')
     
     seq = []
+    seq_index = []
     coords = []
     for asym_id in asym_ids:
         seq.append(torch.tensor([aa_dict[res.name] for res in st[0].get_subchain(asym_id)]))
+        seq_index.append(torch.tensor([res.label_seq for res in st[0].get_subchain(asym_id)]))
         coords.append(torch.tensor([[[res['N'][0].pos.tolist(), res['CA'][0].pos.tolist(), res['C'][0].pos.tolist()] for res in mod.get_subchain(asym_id)] for mod in st]))
     
     if not asym_ids:
@@ -58,10 +67,14 @@ def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, de
                 if chain.check_polymer_type() == gemmi.PolymerType.PeptideL:
                     chain_ids.append(chain_id)
                     seq.append(torch.tensor([aa_dict[res.name] for res in chain]))
+                    seqid_record = defaultdict(int)
+                    seq_index.append(torch.tensor([seqid2num(res.seqid, seqid_record) for res in chain]))
                     coords.append(torch.tensor([[[res['N'][0].pos.tolist(), res['CA'][0].pos.tolist(), res['C'][0].pos.tolist()] for res in mod[chain_id].get_polymer()] for mod in st]))
         else:
             for chain_id in chain_ids:
                 seq.append(torch.tensor([aa_dict[res.name] for res in st[0][chain_id].get_polymer()]))
+                seqid_record = defaultdict(int)
+                seq_index.append(torch.tensor([seqid2num(res.seqid, seqid_record) for res in st[0][chain_id].get_polymer()]))
                 coords.append(torch.tensor([[[res['N'][0].pos.tolist(), res['CA'][0].pos.tolist(), res['C'][0].pos.tolist()] for res in mod[chain_id].get_polymer()] for mod in st]))
                     
         chain_info = {'chain_ids': chain_ids}
@@ -72,10 +85,11 @@ def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, de
 
     length = [len(i) for i in seq]
     seq = torch.cat(seq, dim=0).to(device=device)
+    seq_index = torch.cat(seq_index, dim=0).to(device=device)
     coords = torch.cat(coords, dim=1).to(device=device)
 
     n_coords, ca_coords, c_coords = coords[:,:,0], coords[:,:,1], coords[:,:,2]
-    seq_index = torch.arange(coords.shape[1], device=device)
+    # seq_index = torch.arange(coords.shape[1], device=device)
     seqab = torch.stack(torch.meshgrid(seq, seq, indexing='ij'), dim=-1)[None]
 
     if len(length) > 1:
@@ -89,6 +103,8 @@ def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, de
     else:
         seqsepab = (seq_index[None, :] - seq_index[:, None])[None]
     
+    chain_info['seq_index'] = seq_index
+    chain_info['length'] = length
     return chain_info, n_coords, ca_coords, c_coords, seqab, seqsepab
 
     
