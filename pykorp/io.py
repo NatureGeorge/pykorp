@@ -2,7 +2,7 @@
 # @Filename: io.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-13 07:09:12 pm
+# @Last Modified: 2025-01-14 12:23:56 am
 import math
 import torch
 import roma
@@ -64,7 +64,7 @@ def frame_coords(n_coords: torch.Tensor, ca_coords: torch.Tensor, c_coords: torc
     return roma.special_gramschmidt(torch.stack([r_cca + r_nca, r_nca], dim=-1)).roll(shifts=-1, dims=-1) # the NCaC frame used by KORP
 
 
-def featurize_frames(fa_v: torch.Tensor, fa_p: torch.Tensor, fb_v: torch.Tensor, fb_p: torch.Tensor):  # cutoff: float = 16.0
+def featurize_frames(fa_v: torch.Tensor, fa_p: torch.Tensor, fb_v: Optional[torch.Tensor] = None, fb_p: Optional[torch.Tensor] = None):  # cutoff: float = 16.0
     '''
     Definition of the 6D features (relative orientation and position) used by 
     
@@ -80,6 +80,8 @@ def featurize_frames(fa_v: torch.Tensor, fa_p: torch.Tensor, fb_v: torch.Tensor,
     
     Output shape: (...xaxbx6)
     '''
+    if fb_v is None: fb_v = fa_v
+    if fb_p is None: fb_p = fa_p
     is_symmetric = (fa_v is fb_v) and (fa_p is fb_p)
 
     rab = fb_p.unsqueeze(-3) - fa_p.unsqueeze(-2) # shape: (...xaxbx3)
@@ -127,6 +129,10 @@ def discretize_features(br: torch.Tensor, theta: torch.Tensor, dpsi: torch.Tenso
     '''
     Discretize the 6D features into bin indices.
     
+    José Ramón López-Blanco and Pablo Chacón. (2019)
+    KORP: knowledge-based 6D potential for fast protein and loop modeling.
+    doi: 10.1093/bioinformatics/btz026.
+    
     NOTE: this function is not differentiable
     '''
     ir = torch.clip(torch.bucketize(dab, br, right=False) - 1, min=0)
@@ -167,6 +173,12 @@ def korp_energy(
         br: torch.Tensor, theta: torch.Tensor, dpsi: torch.Tensor, dchi: float, nring: int, ncellsring: torch.Tensor, icell: torch.Tensor,
         bonding_thr: int = 9):
     '''
+    Calculate the KORP energy introduced by
+
+    José Ramón López-Blanco and Pablo Chacón. (2019)
+    KORP: knowledge-based 6D potential for fast protein and loop modeling.
+    doi: 10.1093/bioinformatics/btz026.
+
     Input shape:
         seqab: (...xaxbx2)
         seqsepab: (...xaxb)
@@ -180,8 +192,23 @@ def korp_energy(
     * Triu part
     * dab < dab_max
     * bond = 0 if (seq_sep > bonding_thr) or (diff_chain) else 1
-    * bonding_factor = 1.8
     
+    Typical usage:
+
+    ```python
+    device = 'cpu'
+    bonding_thr = 9
+    bonding_factor = 1.8
+    config = pykorp.config('korp6Dv1.bin', device=device, bonding_factor=bonding_factor)
+    chain_info, n_coords, ca_coords, c_coords, seqab, seqsepab = pykorp.pdb_io('2KOX.cif.gz', device=device)
+
+    korpe = korp_energy(
+            *featurize_frames(frame_coords(n_coords, ca_coords, c_coords), ca_coords),
+            seqab, seqsepab,
+            *config,
+            bonding_thr=bonding_thr).sum(dim=(-1, -2))
+    ```
+
     '''
     ir, ita, itb, ipa, ipb, ic = discretize_features(br, theta, dpsi, dchi, nring, ncellsring, dab, ta, tb, pa, pb, chi)
     

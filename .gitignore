@@ -3,3 +3,4 @@ build
 .vscode
 *.so
 pykorp/__pycache__
+pykorp.egg-info
