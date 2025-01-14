@@ -2,7 +2,7 @@
 # @Filename: io.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-14 12:23:56 am
+# @Last Modified: 2025-01-14 02:42:36 pm
 import math
 import torch
 import roma
@@ -79,6 +79,8 @@ def featurize_frames(fa_v: torch.Tensor, fa_p: torch.Tensor, fb_v: Optional[torc
         fb_p: trans_b (...xbx3)
     
     Output shape: (...xaxbx6)
+
+    TODO: reduce memory overhead
     '''
     if fb_v is None: fb_v = fa_v
     if fb_p is None: fb_p = fa_p
