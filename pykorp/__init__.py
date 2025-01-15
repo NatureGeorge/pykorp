@@ -2,7 +2,7 @@
 # @Filename: __init__.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-14 01:34:50 pm
+# @Last Modified: 2025-01-15 08:11:11 pm
 import torch
 import gemmi
 from collections import defaultdict
@@ -14,7 +14,7 @@ def config(bin_path: str, device: str = 'cpu', bonding_factor: float = 1.8):
     
     data = read_korp(bin_path, bonding_factor)
     maps = data['maps'][:,0,0]
-    korp_maps_flatten, korp_maps_shape = torch.from_numpy(maps.flatten()).to(device=device), maps.shape
+    korp_maps = torch.from_numpy(maps).to(device=device)
     fmapping = torch.from_numpy(data['fmapping']).to(device=device)
     smapping = torch.from_numpy(data['smapping']).to(dtype=torch.long, device=device)
     br = torch.from_numpy(data['br']).to(device=device)
@@ -24,7 +24,7 @@ def config(bin_path: str, device: str = 'cpu', bonding_factor: float = 1.8):
     nring = data['meshes'][0]['nring']
     ncellsring = torch.from_numpy(data['meshes'][0]['ncellsring']).to(dtype=torch.long, device=device)
     icell = torch.from_numpy(data['meshes'][0]['icell']).to(dtype=torch.long, device=device)
-    return korp_maps_flatten, korp_maps_shape, fmapping, smapping, br, theta, dpsi, dchi, nring, ncellsring, icell
+    return korp_maps, fmapping, smapping, br, theta, dpsi, dchi, nring, ncellsring, icell
 
 
 def seqid2num(seqid, record):

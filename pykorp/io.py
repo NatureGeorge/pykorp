@@ -2,12 +2,12 @@
 # @Filename: io.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-14 02:42:36 pm
+# @Last Modified: 2025-01-15 09:18:09 pm
 import math
 import torch
 import roma
 from warnings import warn
-from typing import Optional
+from typing import Optional, Tuple
 from .utils import planar_angle, dihedral, projection
 
 
@@ -64,7 +64,7 @@ def frame_coords(n_coords: torch.Tensor, ca_coords: torch.Tensor, c_coords: torc
     return roma.special_gramschmidt(torch.stack([r_cca + r_nca, r_nca], dim=-1)).roll(shifts=-1, dims=-1) # the NCaC frame used by KORP
 
 
-def featurize_frames(fa_v: torch.Tensor, fa_p: torch.Tensor, fb_v: Optional[torch.Tensor] = None, fb_p: Optional[torch.Tensor] = None):  # cutoff: float = 16.0
+def featurize_frames_full(fa_v: torch.Tensor, fa_p: torch.Tensor, fb_v: Optional[torch.Tensor] = None, fb_p: Optional[torch.Tensor] = None):  # cutoff: float = 16.0
     '''
     Definition of the 6D features (relative orientation and position) used by 
     
@@ -79,8 +79,6 @@ def featurize_frames(fa_v: torch.Tensor, fa_p: torch.Tensor, fb_v: Optional[torc
         fb_p: trans_b (...xbx3)
     
     Output shape: (...xaxbx6)
-
-    TODO: reduce memory overhead
     '''
     if fb_v is None: fb_v = fa_v
     if fb_p is None: fb_p = fa_p
@@ -126,6 +124,70 @@ def featurize_frames(fa_v: torch.Tensor, fa_p: torch.Tensor, fb_v: Optional[torc
     return dab, ta, tb, pa, pb, chi
 
 
+def featurize_frames(fa_v: torch.Tensor, fa_p: torch.Tensor, fb_v: Optional[torch.Tensor] = None, fb_p: Optional[torch.Tensor] = None, dab_min: float = 3, dab_max: float = 16, mask : Optional[torch.Tensor] = None):
+    '''
+    Definition of the 6D features (relative orientation and position) used by 
+    
+    José Ramón López-Blanco and Pablo Chacón. (2019)
+    KORP: knowledge-based 6D potential for fast protein and loop modeling.
+    doi: 10.1093/bioinformatics/btz026.
+    
+    Input shape:
+        fa_v: rotmat_a (...xax3x3)
+        fa_p: trans_a (...xax3)
+        fb_v: rotmat_b (...xbx3x3)
+        fb_p: trans_b (...xbx3)
+        mask: (...xaxb)
+    
+    TODO: apply sth like `pytorch3d.ops.ball_query`
+    '''
+    if fb_v is None: fb_v = fa_v
+    if fb_p is None: fb_p = fa_p
+    is_symmetric = (fa_v is fb_v) and (fa_p is fb_p)
+
+    rab = fb_p.unsqueeze(-3) - fa_p.unsqueeze(-2) # shape: (...xaxbx3) # NOTE: out of memory keypoint
+    
+    dab = rab.norm(dim=-1) # shape: (...xaxb)
+    dmask = (dab < dab_max) & (dab > dab_min) # shape: (...xaxb)
+    if mask is not None: dmask &= mask
+    index_ab = torch.where(dmask)
+    
+    dab = dab[dmask]
+    rab = rab[dmask]
+    rba = -rab
+    
+    fa_v = fa_v[index_ab[:-1]]
+    fb_v = fb_v[index_ab[:-2]+(index_ab[-1],)]
+    fa_vx = fa_v[..., 0]
+    fa_vy = fa_v[..., 1]
+    fa_vz = fa_v[..., 2]
+
+    ta = planar_angle(fa_vz, rab)
+
+    rab_on_axy = rab - projection(rab, fa_vz) # project on the z axis and then substract it
+    pa = torch.pi - planar_angle(fa_vx, rab_on_axy)
+    keep_maska = torch.einsum('...km,...km->...k', fa_vy, rab_on_axy) < 0
+    pa[~keep_maska] *= -1
+    pa += torch.pi
+
+    
+    fb_vx = fb_v[..., 0]
+    fb_vy = fb_v[..., 1]
+    fb_vz = fb_v[..., 2]
+
+    tb = planar_angle(fb_vz, rba)
+
+    rba_on_bxy = rba - projection(rba, fb_vz) # project on the z axis and then substract it
+    pb = torch.pi - planar_angle(fb_vx, rba_on_bxy)
+    keep_maskb = torch.einsum('...km,...km->...k', fb_vy, rba_on_bxy) < 0
+    pb[~keep_maskb] *= -1
+    pb += torch.pi
+
+    chi = torch.pi + dihedral(fa_vz, rba, -fb_vz)
+    
+    return (dab, ta, tb, pa, pb, chi), index_ab
+
+
 def discretize_features(br: torch.Tensor, theta: torch.Tensor, dpsi: torch.Tensor, dchi: float, nring: int, ncellsring: torch.Tensor,
                         dab: torch.Tensor, ta: torch.Tensor, tb: Optional[torch.Tensor], pa: torch.Tensor, pb: Optional[torch.Tensor], chi: torch.Tensor):
     '''
@@ -149,8 +211,8 @@ def discretize_features(br: torch.Tensor, theta: torch.Tensor, dpsi: torch.Tenso
     
     if tb is None:
         assert pb is None
-        itb = ita.transpose(-1, -2)
-        ipb = ipa.transpose(-1, -2)
+        itb = None#ita.transpose(-1, -2)
+        ipb = None#ipa.transpose(-1, -2)
     else:
         itb = torch.clip(torch.bucketize(tb, theta, right=False), min=0, max=nring-1)
         ipb = (pb / dpsi[itb]).to(dtype=torch.int64)
@@ -168,7 +230,7 @@ def discretize_features(br: torch.Tensor, theta: torch.Tensor, dpsi: torch.Tenso
     return ir, ita, itb, ipa, ipb, ic
 
 
-def korp_energy(
+def korp_energy_full(
         dab: torch.Tensor, ta: torch.Tensor, tb: torch.Tensor, pa: torch.Tensor, pb: torch.Tensor, chi: torch.Tensor,
         seqab: torch.Tensor, seqsepab: torch.Tensor,
         korp_maps_flatten: torch.Tensor, korp_maps_shape: torch.Size, fmapping: torch.Tensor, smapping: torch.Tensor,
@@ -204,15 +266,20 @@ def korp_energy(
     config = pykorp.config('korp6Dv1.bin', device=device, bonding_factor=bonding_factor)
     chain_info, n_coords, ca_coords, c_coords, seqab, seqsepab = pykorp.pdb_io('2KOX.cif.gz', device=device)
 
-    korpe = korp_energy(
-            *featurize_frames(frame_coords(n_coords, ca_coords, c_coords), ca_coords),
+    korpe = korp_energy_full(
+            *featurize_frames_full(frame_coords(n_coords, ca_coords, c_coords), ca_coords),
             seqab, seqsepab,
-            *config,
+            korp_map.flatten(), korp_map.shape, *config[1:],
             bonding_thr=bonding_thr).sum(dim=(-1, -2))
     ```
 
     '''
     ir, ita, itb, ipa, ipb, ic = discretize_features(br, theta, dpsi, dchi, nring, ncellsring, dab, ta, tb, pa, pb, chi)
+
+    if itb is None:
+        itb = ita.transpose(-1, -2)
+    if ipb is None:
+        ipb = ipa.transpose(-1, -2)
     
     dab_min, dab_max = br[0], br[-1]
     mask = ((seqsepab > 0) & (dab > dab_min) & (dab < dab_max)).to(dtype=torch.int64) # shape (...xaxb)
@@ -244,3 +311,67 @@ def korp_energy(
     
     return energy #.sum(dim=(-1,-2))
 
+
+def korp_energy_raw(
+        dab: torch.Tensor, ta: torch.Tensor, tb: torch.Tensor, pa: torch.Tensor, pb: torch.Tensor, chi: torch.Tensor,
+        seqab: torch.Tensor, seqsepab: torch.Tensor,
+        korp_maps: torch.Tensor, fmapping: torch.Tensor, smapping: torch.Tensor,
+        br: torch.Tensor, theta: torch.Tensor, dpsi: torch.Tensor, dchi: float, nring: int, ncellsring: torch.Tensor, icell: torch.Tensor,
+        bonding_thr: int = 4):
+    '''
+    Calculate the KORP energy introduced by
+
+    José Ramón López-Blanco and Pablo Chacón. (2019)
+    KORP: knowledge-based 6D potential for fast protein and loop modeling.
+    doi: 10.1093/bioinformatics/btz026.
+
+    Input shape:
+        seqab: (...xsx2)
+        seqsepab: (...xs)
+
+    Output shape: (...xs)
+    
+    NOTE: this function is not differentiable
+    '''
+    ir, ita, itb, ipa, ipb, ic = discretize_features(br, theta, dpsi, dchi, nring, ncellsring, dab, ta, tb, pa, pb, chi)
+    s = (seqsepab <= bonding_thr).to(torch.int64) # when `smapping=[ 0, -1,  1,  1,  1,  0,  0,  0,  0,  0]`, `bonding_thr` is essentially 4 
+    energy = fmapping[s] * korp_maps[s, seqab[..., 0], seqab[..., 1], ir, (icell[ita] + ipa), (icell[itb] + ipb), ic]
+    return energy
+
+
+def korp_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, config: Tuple):
+    '''
+    Calculate the KORP energy introduced by
+
+    José Ramón López-Blanco and Pablo Chacón. (2019)
+    KORP: knowledge-based 6D potential for fast protein and loop modeling.
+    doi: 10.1093/bioinformatics/btz026.
+
+    NOTE: this function assumes there is only one protein/complex sequence.
+    NOTE: more flexible settings can be achieved via `korp_energy_raw`.
+
+    Input shape:
+        seqab: (1xaxbx2)
+        seqsepab: (1xaxb)
+
+    Output shape: (B) which is determined by `features`
+    
+    NOTE: this function is not differentiable
+
+    Typical usage:
+
+    ```python
+    device = 'cuda:0'
+    config = pykorp.config('korp6Dv1.bin', device=device)
+    chain_info, n_coords, ca_coords, c_coords, seqab, seqsepab = pykorp.pdb_io('2DWV.cif.gz', device=device)
+    features = featurize_frames(frame_coords(n_coords, ca_coords, c_coords), ca_coords, mask=seqsepab > 1)
+    korpe = korp_energy(features, seqab, seqsepab, config)
+    '''
+    features, index = features
+    index_0 = (torch.zeros_like(index[0]), index[1], index[2])
+    energy = korp_energy_raw(
+            *features,
+            seqab[index_0], seqsepab[index_0], # NOTE: assumes there is only one protein/complex sequence
+            *config)
+    energy = torch.zeros(index[0].max()+1, dtype=energy.dtype, device=energy.device).scatter_add_(src=energy, dim=0, index=index[0])
+    return energy

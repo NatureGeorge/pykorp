@@ -24,10 +24,9 @@ except Exception:
 
 chain_info, n_coords, ca_coords, c_coords, seqab, seqsepab = pykorp.pdb_io('2DWV.cif.gz', device=device)
 
-korpe = korp_energy(
-        *featurize_frames(frame_coords(n_coords, ca_coords, c_coords), ca_coords),
-        seqab, seqsepab,
-        *config).sum(dim=(-1, -2))
+features = featurize_frames(frame_coords(n_coords, ca_coords, c_coords), ca_coords, mask=seqsepab > 1)
+
+korpe = korp_energy(features, seqab, seqsepab, config)
 ```
 
 ## Reference
@@ -44,5 +43,19 @@ korpe = korp_energy(
   month    = {01},
   issn     = {1367-4803},
   doi      = {10.1093/bioinformatics/btz026}
+}
+```
+
+If you use this software in your work, please also cite:
+
+```bibtex
+@software{PyKORP_2025,
+  author  = {Zhu, Zefeng},
+  license = {MIT},
+  title   = {{PyKORP: Python bindings and PyTorch implementation of KORP.}},
+  url     = {https://github.com/naturegeorge/pykorp},
+  version = {1.0.0},
+  year    = {2025},
+  month   = {01}
 }
 ```
