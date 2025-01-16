@@ -2,11 +2,12 @@
 # @Filename: __init__.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-15 08:11:11 pm
+# @Last Modified: 2025-01-16 04:12:57 pm
 import torch
 import gemmi
 from collections import defaultdict
-from .io import aa_dict as AA_20
+from .feat import aa_dict as AA_20
+from .feat import frame_coords, featurize_frames, featurize_frames_full, discretize_features, korp_energy_full, korp_energy_raw, korp_energy
 
 
 def config(bin_path: str, device: str = 'cpu', bonding_factor: float = 1.8):
@@ -90,6 +91,7 @@ def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, de
 
     n_coords, ca_coords, c_coords = coords[:,:,0], coords[:,:,1], coords[:,:,2]
     # seq_index = torch.arange(coords.shape[1], device=device)
+    # TODO: optimize seqab and seqsepab -> make it memory efficient
     seqab = torch.stack(torch.meshgrid(seq, seq, indexing='ij'), dim=-1)[None]
 
     if len(length) > 1:
@@ -103,6 +105,7 @@ def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, de
     else:
         seqsepab = (seq_index[None, :] - seq_index[:, None])[None]
     
+    chain_info['seq'] = seq
     chain_info['seq_index'] = seq_index
     chain_info['length'] = length
     return chain_info, n_coords, ca_coords, c_coords, seqab, seqsepab

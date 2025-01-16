@@ -12,7 +12,7 @@ pip install pykorp # optional: pip install pykorp[ckorp]
 
 ```python
 import pykorp
-from pykorp.io import frame_coords, featurize_frames, korp_energy
+from pykorp import frame_coords, featurize_frames, korp_energy
 import torch
 
 device = 'cpu' # or 'cuda:0'
