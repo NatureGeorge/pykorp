@@ -22,7 +22,8 @@ try:
 except Exception:
     config = torch.load('korp6Dv1.bin.pt', map_location=device)
 
-chain_info, n_coords, ca_coords, c_coords, seqab, seqsepab = pykorp.pdb_io('2DWV.cif.gz', device=device)
+chain_info, n_coords, ca_coords, c_coords = pykorp.pdb_io('2DWV.cif.gz', device=device)
+seqab, seqsepab = pykorp.seq_info(chain_info['seq'], chain_info['seq_index'], chain_info['length'])
 
 features = featurize_frames(frame_coords(n_coords, ca_coords, c_coords), ca_coords, mask=seqsepab > 1)
 

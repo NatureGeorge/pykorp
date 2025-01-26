@@ -2,7 +2,7 @@
 # @Filename: __init__.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-16 04:12:57 pm
+# @Last Modified: 2025-01-19 05:03:01 pm
 import torch
 import gemmi
 from collections import defaultdict
@@ -88,14 +88,20 @@ def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, de
     seq = torch.cat(seq, dim=0).to(device=device)
     seq_index = torch.cat(seq_index, dim=0).to(device=device)
     coords = torch.cat(coords, dim=1).to(device=device)
-
     n_coords, ca_coords, c_coords = coords[:,:,0], coords[:,:,1], coords[:,:,2]
-    # seq_index = torch.arange(coords.shape[1], device=device)
+    
+    chain_info['seq'] = seq
+    chain_info['seq_index'] = seq_index
+    chain_info['length'] = length
+    return chain_info, n_coords, ca_coords, c_coords
+
+    
+def seq_info(seq: torch.Tensor, seq_index: torch.Tensor, length):
     # TODO: optimize seqab and seqsepab -> make it memory efficient
     seqab = torch.stack(torch.meshgrid(seq, seq, indexing='ij'), dim=-1)[None]
 
     if len(length) > 1:
-        seqsepab = torch.full((seq_index.shape[0], seq_index.shape[0]), fill_value=seq_index.shape[0], device=device)
+        seqsepab = torch.full((seq_index.shape[0], seq_index.shape[0]), fill_value=seq_index.shape[0], device=seq.device)
         seqsepab = torch.triu(seqsepab) - torch.tril(seqsepab)
         for chain_idx in range(len(length)):
             beg = sum(length[:chain_idx])
@@ -104,10 +110,15 @@ def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, de
         seqsepab = seqsepab.unsqueeze(0)
     else:
         seqsepab = (seq_index[None, :] - seq_index[:, None])[None]
-    
-    chain_info['seq'] = seq
-    chain_info['seq_index'] = seq_index
-    chain_info['length'] = length
-    return chain_info, n_coords, ca_coords, c_coords, seqab, seqsepab
+    return seqab, seqsepab
 
-    
+
+def seq_info_serial(seq: torch.Tensor, seq_index: torch.Tensor, length):
+    seqab = []
+    seqsep_ab = []
+    total_length = seq.shape[0]
+    for i in range(total_length-1):
+        for j in range(i+1, total_length):
+            seqab.append(torch.stack((seq[i], seq[j])))
+            seqsep_ab.append(seq_index[j] - seq_index[i] if True else total_length)
+    return
