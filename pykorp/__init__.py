@@ -2,7 +2,7 @@
 # @Filename: __init__.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-19 05:03:01 pm
+# @Last Modified: 2025-02-17 10:48:56 am
 import torch
 import gemmi
 from collections import defaultdict
@@ -54,7 +54,11 @@ def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, de
     seq = []
     seq_index = []
     coords = []
+    entity_ids = []
     for asym_id in asym_ids:
+        for entity in st.entities:
+            if asym_id in entity.subchains:
+                entity_ids.append(entity.name)
         seq.append(torch.tensor([aa_dict[res.name] for res in st[0].get_subchain(asym_id)]))
         seq_index.append(torch.tensor([res.label_seq for res in st[0].get_subchain(asym_id)]))
         coords.append(torch.tensor([[[res['N'][0].pos.tolist(), res['CA'][0].pos.tolist(), res['C'][0].pos.tolist()] for res in mod.get_subchain(asym_id)] for mod in st]))
@@ -93,6 +97,7 @@ def pdb_io(pdb_path: str, asym_ids = None, chain_ids = None, aa_dict = AA_20, de
     chain_info['seq'] = seq
     chain_info['seq_index'] = seq_index
     chain_info['length'] = length
+    chain_info['entity_id'] = entity_ids
     return chain_info, n_coords, ca_coords, c_coords
 
     

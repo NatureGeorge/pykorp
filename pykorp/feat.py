@@ -2,7 +2,7 @@
 # @Filename: feat.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-01-19 04:29:24 pm
+# @Last Modified: 2025-08-05 12:12:18 pm
 import math
 import torch
 import roma
@@ -339,7 +339,7 @@ def korp_energy_raw(
     return energy
 
 
-def korp_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, config: Tuple):
+def korp_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, config: Tuple, per_residue: bool = False, per_residue_sym: bool = False):
     '''
     Calculate the KORP energy introduced by
 
@@ -374,5 +374,23 @@ def korp_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, co
             *features,
             seqab[index_0], seqsepab[index_0], # NOTE: assumes there is only one protein/complex sequence
             *config)
-    energy = torch.zeros(index[0].max()+1, dtype=energy.dtype, device=energy.device).scatter_add_(src=energy, dim=0, index=index[0])
+    batch_size = index[0].max()+1
+    if not per_residue:
+        energy = torch.zeros(batch_size, dtype=energy.dtype, device=energy.device).scatter_add_(src=energy, dim=0, index=index[0])
+    else:
+        seq_len = seqab.shape[1]
+        flat_index = index[0] * seq_len + index[2]
+        result = torch.zeros((batch_size * seq_len), dtype=energy.dtype, device=energy.device)
+        result.scatter_add_(dim=0, index=flat_index, src=energy)
+        result = result.view(batch_size, seq_len)
+
+        if per_residue_sym:
+            flat_index = index[0] * seq_len + index[1]
+            result_ = torch.zeros((batch_size * seq_len), dtype=energy.dtype, device=energy.device)
+            result_.scatter_add_(dim=0, index=flat_index, src=energy)
+            result_ = result_.view(batch_size, seq_len)
+            result += result_
+        
+        energy = result
+        
     return energy
