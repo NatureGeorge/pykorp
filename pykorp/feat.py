@@ -2,8 +2,10 @@
 # @Filename: feat.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-08-05 12:12:18 pm
+# @Last Modified: 2025-08-09 01:13:51 pm
 import math
+import itertools
+import operator
 import torch
 import roma
 from warnings import warn
@@ -339,6 +341,12 @@ def korp_energy_raw(
     return energy
 
 
+def energy_gather(batch_shape, energy: torch.Tensor, index, end_dim: int):
+    flat_index = sum(i*j for i,j in zip(tuple(itertools.accumulate(batch_shape[::-1], operator.mul, initial=1))[::-1][-len(batch_shape):], index[:end_dim]))
+    result = torch.zeros(math.prod(batch_shape), dtype=energy.dtype, device=energy.device).scatter_add_(dim=0, index=flat_index, src=energy).view(batch_shape)
+    return result
+
+
 def korp_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, config: Tuple, per_residue: bool = False, per_residue_sym: bool = False):
     '''
     Calculate the KORP energy introduced by
@@ -347,7 +355,6 @@ def korp_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, co
     KORP: knowledge-based 6D potential for fast protein and loop modeling.
     doi: 10.1093/bioinformatics/btz026.
 
-    NOTE: this function assumes there is only one protein/complex sequence.
     NOTE: more flexible settings can be achieved via `korp_energy_raw`.
 
     Input shape:
@@ -369,28 +376,31 @@ def korp_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, co
     korpe = korp_energy(features, seqab, seqsepab, config)
     '''
     features, index = features
-    index_0 = (torch.zeros_like(index[0]), index[1], index[2])
     energy = korp_energy_raw(
             *features,
-            seqab[index_0], seqsepab[index_0], # NOTE: assumes there is only one protein/complex sequence
+            seqab[index], seqsepab[index],
             *config)
-    batch_size = index[0].max()+1
+    
     if not per_residue:
-        energy = torch.zeros(batch_size, dtype=energy.dtype, device=energy.device).scatter_add_(src=energy, dim=0, index=index[0])
+        end_dim = -2
     else:
-        seq_len = seqab.shape[1]
-        flat_index = index[0] * seq_len + index[2]
-        result = torch.zeros((batch_size * seq_len), dtype=energy.dtype, device=energy.device)
-        result.scatter_add_(dim=0, index=flat_index, src=energy)
-        result = result.view(batch_size, seq_len)
-
-        if per_residue_sym:
-            flat_index = index[0] * seq_len + index[1]
-            result_ = torch.zeros((batch_size * seq_len), dtype=energy.dtype, device=energy.device)
-            result_.scatter_add_(dim=0, index=flat_index, src=energy)
-            result_ = result_.view(batch_size, seq_len)
-            result += result_
-        
-        energy = result
-        
+        index = list(index)
+        a = index[-2]
+        b = index[-1]
+        index[-2] = b
+        index[-1] = a
+        end_dim = -1
+    
+    batch_shape = tuple(i.max().cpu().tolist()+1 for i in index[:end_dim])
+    result = energy_gather(batch_shape, energy, index, end_dim)
+    
+    if per_residue and per_residue_sym:
+        a = index[-2]
+        b = index[-1]
+        index[-2] = b
+        index[-1] = a
+        result += energy_gather(batch_shape, energy, index, end_dim)
+    
+    energy = result
+    
     return energy
