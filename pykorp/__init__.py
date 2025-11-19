@@ -2,12 +2,14 @@
 # @Filename: __init__.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-02-17 10:48:56 am
+# @Last Modified: 2025-11-19 04:19:46 pm
 import torch
 import gemmi
 from collections import defaultdict
 from .feat import aa_dict as AA_20
+from .feat import W6DK as W6D
 from .feat import frame_coords, featurize_frames, featurize_frames_full, discretize_features, korp_energy_full, korp_energy_raw, korp_energy
+from .feat import korpm_energy
 
 
 def config(bin_path: str, device: str = 'cpu', bonding_factor: float = 1.8):

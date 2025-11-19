@@ -2,7 +2,7 @@
 # @Filename: feat.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-08-09 01:13:51 pm
+# @Last Modified: 2025-11-19 04:44:06 pm
 import math
 import itertools
 import operator
@@ -34,7 +34,12 @@ aa_dict = dict(
     VAL =  17,
     TRP =  18,
     TYR =  19,
+    SEC = 1,
+    PYL = 8,
 )
+
+
+W6DK = torch.tensor([1.875, 0.718, 0.876, 0.876, 2.440, 0.973, 1.030, 2.512, 1.030, 2.512, 1.643, 1.113, 1.411, 1.113, 1.608, 1.113, 1.113, 2.512, 1.411, 2.440])
 
 
 def frame_coords(n_coords: torch.Tensor, ca_coords: torch.Tensor, c_coords: torch.Tensor):
@@ -358,10 +363,10 @@ def korp_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, co
     NOTE: more flexible settings can be achieved via `korp_energy_raw`.
 
     Input shape:
-        seqab: (1xaxbx2)
-        seqsepab: (1xaxb)
+        seqab: (...xaxbx2)
+        seqsepab: (...xaxb)
 
-    Output shape: (B) which is determined by `features`
+    Output shape: (...) which is determined by `features`
     
     NOTE: this function is not differentiable
 
@@ -371,9 +376,10 @@ def korp_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, co
     device = 'cuda:0'
     config = pykorp.config('korp6Dv1.bin', device=device)
     chain_info, n_coords, ca_coords, c_coords = pykorp.pdb_io('2DWV.cif.gz', device=device)
+    modnum = n_coords.shape[0]
     seqab, seqsepab = pykorp.seq_info(chain_info['seq'], chain_info['seq_index'], chain_info['length'])
     features = featurize_frames(frame_coords(n_coords, ca_coords, c_coords), ca_coords, mask=seqsepab > 1)
-    korpe = korp_energy(features, seqab, seqsepab, config)
+    korpe = korp_energy(features, seqab.expand(modnum, *seqab.shape[1:]), seqsepab.expand(modnum, *seqsepab.shape[1:]), config)
     '''
     features, index = features
     energy = korp_energy_raw(
@@ -404,3 +410,100 @@ def korp_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, co
     energy = result
     
     return energy
+
+
+def korpm_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, config: Tuple, mutations = None):
+    '''
+    Calculate ddG using the KORP energy introduced by
+
+    Iván Martín Hernández, Yves Dehouck, Ugo Bastolla, José Ramón López-Blanco, Pablo Chacón. (2023)
+    Predicting protein stability changes upon mutation using a simple orientational potential.
+    doi: 10.1093/bioinformatics/btad011.
+
+    José Ramón López-Blanco and Pablo Chacón. (2019)
+    KORP: knowledge-based 6D potential for fast protein and loop modeling.
+    doi: 10.1093/bioinformatics/btz026.
+
+    Input shape:
+        seqab: (...xaxbx2)
+        seqsepab: (...xaxb)
+        mutations: format: Sequence((position_idx, muta_type_idx)); None for single-point deep mutational scanning
+
+    Output shape: (...) which is determined by `features`
+    
+    NOTE: this function is not differentiable
+
+    Typical usage:
+
+    ```python
+    device = 'cuda:0'
+    config = pykorp.config('korp6Dv1.bin', device=device)
+    chain_info, n_coords, ca_coords, c_coords = pykorp.pdb_io('2LHD.cif.gz', device=device)
+    modnum = n_coords.shape[0]
+    seqab, seqsepab = pykorp.seq_info(chain_info['seq'], chain_info['seq_index'], chain_info['length'])
+    features = featurize_frames(frame_coords(n_coords, ca_coords, c_coords), ca_coords, mask=seqsepab > 1)
+    ddG = korpm_energy(features, seqab.expand(modnum, *seqab.shape[1:]), seqsepab.expand(modnum, *seqsepab.shape[1:]), config, mutations=[(24, 7), (44, 9)])
+    '''
+    W6D = W6DK.to(device=config[0].device)
+    batch_size = seqab.shape[0]
+    length = seqab.shape[1]
+
+    features_, index = features
+    seqab_index = seqab[index]
+    seqsepab_index = seqsepab[index]
+
+    dab, ta, tb, pa, pb, chi = features_
+    fmapping, smapping, br, theta, dpsi, dchi, nring, ncellsring, icell = config[1:]
+    ir, ita, itb, ipa, ipb, ic = discretize_features(br, theta, dpsi, dchi, nring, ncellsring, dab, ta, tb, pa, pb, chi)
+    s = (seqsepab_index <= 4).to(torch.int64)
+    icell_ita_ipa, icell_itb_ipb = (icell[ita] + ipa), (icell[itb] + ipb)
+    fmapping_s = fmapping[s]
+    
+    if mutations is None:
+        DMS = True
+        positions = range(length)
+        mutations = [(loc, aa_idx) for loc in positions for aa_idx in range(20)]
+    else:
+        DMS = False
+        positions = frozenset(muta[0] for muta in mutations)
+    
+    diff_index_dict = dict()
+    cache_dict = dict()
+    for loc in positions:
+        muta_seqab = seqab.clone()
+        muta_seqab[:, loc, :, 0] = muta_seqab[:, :, loc, 1] = -1
+        muta_seqab_index = muta_seqab[index]
+        diff_index = torch.where(seqab_index != muta_seqab_index)[0]
+        diff_index_dict[loc] = diff_index
+
+        fmapping_s_diff_indexed = fmapping_s[diff_index]
+        s_diff_indexed = s[diff_index]
+        seqab_index_diff_indexed = seqab_index[diff_index]
+        ir_diff_indexed = ir[diff_index]
+        icell_ita_ipa_diff_indexed = icell_ita_ipa[diff_index]
+        icell_itb_ipb_diff_indexed = icell_itb_ipb[diff_index]
+        ic_diff_indexed = ic[diff_index]
+        wild_type_dG = fmapping_s_diff_indexed * config[0][s_diff_indexed, seqab_index_diff_indexed[...,0], seqab_index_diff_indexed[...,1], ir_diff_indexed, icell_ita_ipa_diff_indexed, icell_itb_ipb_diff_indexed, ic_diff_indexed] * W6D[seqab_index_diff_indexed.flatten()].reshape(seqab_index_diff_indexed.shape).prod(dim=-1)
+        muta_type_dG_cache = fmapping_s_diff_indexed.unsqueeze(-1).unsqueeze(-1) * config[0][s_diff_indexed, :, :, ir_diff_indexed, icell_ita_ipa_diff_indexed, icell_itb_ipb_diff_indexed, ic_diff_indexed]
+
+        cache_dict[loc] = (wild_type_dG, muta_type_dG_cache)
+
+    ddG = []
+    for pos, muta_aa_idx in mutations:
+        muta_seqab = seqab.clone()
+        muta_seqab[:, pos, :, 0] = muta_seqab[:, :, pos, 1] = muta_aa_idx
+        muta_seqab_index = muta_seqab[index]
+        muta_seqab_index_diff_indexed = muta_seqab_index[diff_index_dict[pos]]
+
+        a, b_cache = cache_dict[pos]
+        # TODO: broadcast `a`, stack `b` ?
+        x = ((a - b_cache[torch.arange(b_cache.shape[0]), muta_seqab_index_diff_indexed[..., 0], muta_seqab_index_diff_indexed[..., 1]] * W6D[muta_seqab_index_diff_indexed.flatten()].reshape(muta_seqab_index_diff_indexed.shape).prod(dim=-1))/100)
+
+        end_dim = -2
+        diff_index_tuple = tuple(i[diff_index_dict[pos]] for i in index)
+        batch_shape = (batch_size, ) # tuple(i.max().cpu().tolist()+1 for i in diff_index_tuple[:end_dim])
+        ddG.append(energy_gather(batch_shape, x, diff_index_tuple, end_dim))
+    
+    ddG = torch.stack(ddG, dim=0)
+    if DMS: ddG = ddG.reshape(length, 20, batch_size)
+    return ddG
