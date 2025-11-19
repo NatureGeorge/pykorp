@@ -2,7 +2,7 @@
 # @Filename: feat.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-11-19 04:44:06 pm
+# @Last Modified: 2025-11-19 04:49:32 pm
 import math
 import itertools
 import operator
@@ -36,6 +36,53 @@ aa_dict = dict(
     TYR =  19,
     SEC = 1,
     PYL = 8,
+)
+
+
+aa20_one_letter_code = (
+ 'A',
+ 'C',
+ 'D',
+ 'E',
+ 'F',
+ 'G',
+ 'H',
+ 'I',
+ 'K',
+ 'L',
+ 'M',
+ 'N',
+ 'P',
+ 'Q',
+ 'R',
+ 'S',
+ 'T',
+ 'V',
+ 'W',
+ 'Y')
+
+
+aa20_three_letter_code = (
+    'ALA',
+    'CYS',
+    'ASP',
+    'GLU',
+    'PHE',
+    'GLY',
+    'HIS',
+    'ILE',
+    'LYS',
+    'LEU',
+    'MET',
+    'ASN',
+    'PRO',
+    'GLN',
+    'ARG',
+    'SER',
+    'THR',
+    'VAL',
+    'TRP',
+    'TYR',
 )
 
 
