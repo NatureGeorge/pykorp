@@ -59,7 +59,7 @@ mutations = [(pos, aa20_one_letter_code.index(aa)) for pos, aa in mutations]
 ddG = korpm_energy(features, seqab, seqsepab, config, mutations=mutations)
 ```
 
-<img src="asset/DMS.svg" width="50%">
+<img src="asset/DMS.svg" width="100%">
 
 ## Reference
 
