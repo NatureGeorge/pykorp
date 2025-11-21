@@ -2,7 +2,7 @@
 # @Filename: feat.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-11-21 09:30:41 pm
+# @Last Modified: 2025-11-21 09:50:18 pm
 import math
 import itertools
 import operator
@@ -584,7 +584,54 @@ def korpm_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, c
     return ddG
 
 
+
+def dfs_to_trajectories(dfs_sequence):
+    if not dfs_sequence:
+        return []
+    
+    trajectories = []
+    current_trajectory = []
+    previous_level = -1
+    
+    for level, data in dfs_sequence:
+        if level <= previous_level:
+            trajectories.append(current_trajectory.copy())
+            current_trajectory = current_trajectory[:level]
+        
+        current_trajectory.append(data)
+        previous_level = level
+    
+    if current_trajectory:
+        trajectories.append(current_trajectory)
+    
+    return trajectories
+
+
 def korpm_evo_unit(seqab, ddG, remaining_cache, diff_index_dict, cache_dict, features, seqsepab, config, joint_concat, traj, level=0, max_level=100, verbose=False, beam_width=5, cumulative_score=0.0, ddG_CUTOFF=2.0):
+    '''
+    Usage:
+
+    ```python
+    chain_info, n_coords, ca_coords, c_coords = pykorp.pdb_io('1D1R.cif.gz', device='cuda:0')
+    modnum = n_coords.shape[0]
+    length = n_coords.shape[1]
+    seqab, seqsepab = pykorp.seq_info(chain_info['seq'], chain_info['seq_index'], chain_info['length'])
+    seqab, seqsepab = seqab.expand(modnum, *seqab.shape[1:]), seqsepab.expand(modnum, *seqsepab.shape[1:])
+    features, joint_concat = pykorp.featurize_frames(pykorp.frame_coords(n_coords, ca_coords, c_coords), ca_coords, mask=seqsepab > 1, return_joint_concat=True)
+    
+    joint_concat.diagonal(offset=0).fill_(1)
+    joint_concat.diagonal(offset=1).fill_(0)
+    joint_concat.diagonal(offset=-1).fill_(0)
+    joint_concat = joint_concat.cpu().numpy()
+
+    ddG, diff_index_dict, cache_dict, remaining_cache = pykorp.korpm_energy(features, seqab, seqsepab, config, mutations=None, return_cache=True)
+    muta_trajs = []
+    evo_unit(seqab, ddG, remaining_cache, diff_index_dict, cache_dict.copy(), features, seqsepab, config, joint_concat, muta_trajs, max_level=50, beam_width=4, verbose=False)
+    muta_trajs = dfs_to_trajectories(muta_trajs)
+    muta_results = {frozenset(traj) for traj in muta_trajs}
+    ```
+    '''
+    
     if level > max_level: return
     
     ddG_mean = ddG.mean(dim=-1)
