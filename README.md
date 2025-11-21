@@ -6,6 +6,10 @@ Python bindings and PyTorch implementation of [KORP](https://github.com/chaconla
 
 ```bash
 pip install pykorp # optional: pip install pykorp[ckorp]
+
+# or 
+
+pip install git+https://github.com/naturegeorge/pykorp
 ```
 
 ## Usage
