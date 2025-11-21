@@ -2,7 +2,7 @@
 # @Filename: feat.py
 # @Email:  zhuzefeng@stu.pku.edu.cn
 # @Author: Zefeng Zhu
-# @Last Modified: 2025-11-21 03:48:52 pm
+# @Last Modified: 2025-11-21 09:30:41 pm
 import math
 import itertools
 import operator
@@ -582,3 +582,51 @@ def korpm_energy(features: Tuple, seqab: torch.Tensor, seqsepab: torch.Tensor, c
     if DMS: ddG = ddG.reshape(-1, 20, batch_size)
     if return_cache: return ddG, diff_index_dict, cache_dict, [s, fmapping_s, seqab_index, ir, icell_ita_ipa, icell_itb_ipb, ic]
     return ddG
+
+
+def korpm_evo_unit(seqab, ddG, remaining_cache, diff_index_dict, cache_dict, features, seqsepab, config, joint_concat, traj, level=0, max_level=100, verbose=False, beam_width=5, cumulative_score=0.0, ddG_CUTOFF=2.0):
+    if level > max_level: return
+    
+    ddG_mean = ddG.mean(dim=-1)
+    mask = ddG_mean >= ddG_CUTOFF
+    
+    # Get all candidate mutations with cumulative scores
+    candidates = []
+    for loc, muta_idx in zip(*np.where(mask.cpu().numpy())):
+        current_score = ddG_mean[loc, muta_idx].item()
+        total_score = cumulative_score + current_score
+        candidates.append((loc, muta_idx, current_score, total_score))
+    
+    # Sort by cumulative score and select top beam_width
+    candidates.sort(key=lambda x: x[3], reverse=True)
+    beam_candidates = candidates[:beam_width]
+    
+    for loc, muta_idx, score, total_score in beam_candidates:
+        if verbose: print(f"Level {level}: {loc:03d} {aa20_one_letter_code[muta_idx]}({muta_idx:02d}) Score: {score:.3f} Cumulative: {total_score:.3f}")
+        
+        muta_seqab = seqab.clone()
+        muta_seqab[:, loc, :, 0] = muta_seqab[:, :, loc, 1] = muta_idx
+        muta_seqab_index = muta_seqab[features[1]]
+        remaining_cache[2] = muta_seqab_index
+
+        mutations = np.where(joint_concat[loc])[0]
+        ddG_muta = ddG.clone()
+
+        ddG_locs, diff_index_dict, next_cache_dict, remaining_cache = korpm_energy(
+            features, muta_seqab, seqsepab, config, mutations=mutations,
+            return_cache=True, diff_index_dict=diff_index_dict, 
+            cache_dict=cache_dict.copy(), cal_cache_dict=True, 
+            remaining_cache=remaining_cache
+        )
+        ddG_muta[mutations] = ddG_locs
+
+        traj.append((level, (loc, muta_idx))) # total_score
+        korpm_evo_unit(
+            muta_seqab, ddG_muta, remaining_cache, diff_index_dict, 
+            next_cache_dict, features, seqsepab, config, joint_concat, 
+            traj, level+1, max_level, verbose=verbose, 
+            beam_width=beam_width, cumulative_score=total_score,
+            ddG_CUTOFF=ddG_CUTOFF,
+        )
+
+    return
